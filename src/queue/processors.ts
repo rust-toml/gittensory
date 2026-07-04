@@ -480,6 +480,7 @@ const PR_PUBLIC_SURFACE_ACTIONS = new Set([
 ]);
 const PR_GATE_CLOSED_ACTIONS = new Set(["closed"]);
 const ISSUE_PLAN_COOLDOWN_MS = 10 * 60 * 1000;
+const NOTIFY_EVALUATE_EVENTS_PER_JOB = 100;
 
 type RequiredStatusContextsLookup = { requiredContexts: Set<string> | null; resolved: boolean };
 
@@ -509,6 +510,14 @@ function liveFactTokenPart(token: string | undefined): string {
     hash = Math.imul(hash, 0x01000193);
   }
   return `token:${token.length}:${(hash >>> 0).toString(16).padStart(8, "0")}`;
+}
+
+function chunkNotificationEvents(events: DetectedNotificationEvent[]): DetectedNotificationEvent[][] {
+  const chunks: DetectedNotificationEvent[][] = [];
+  for (let start = 0; start < events.length; start += NOTIFY_EVALUATE_EVENTS_PER_JOB) {
+    chunks.push(events.slice(start, start + NOTIFY_EVALUATE_EVENTS_PER_JOB));
+  }
+  return chunks;
 }
 
 function githubAdmissionKeyForToken(
@@ -5602,15 +5611,20 @@ async function processGitHubWebhook(
         },
       });
     }
-    // Batched (#selfhost-maintenance-self-pin): every event this ONE webhook delivery detected rides in a
-    // single notify-evaluate job instead of one job per event -- the audit trail above still records each
-    // event individually, so nothing about observability changes, only how many maintenance-lane rows a
-    // multi-watcher issue (or a review event landing alongside issue-watch matches) creates.
-    if (notificationEvents.length > 0) {
+    // Batched, but bounded (#selfhost-maintenance-self-pin): a popular issue can have thousands of watchers,
+    // so keep queue payloads comfortably below backend message limits while still avoiding one row per event.
+    // Sorted by dedupKey BEFORE chunking (#3218 review): jobCoalesceKey hashes each chunk's OWN sorted dedup-key
+    // set, so it's already order-independent WITHIN a chunk -- but chunk MEMBERSHIP itself was still built from
+    // notificationEvents' arrival order, so a redelivery whose events resolved in a different order could split
+    // across a different 100-event boundary and never coalesce with the earlier attempt. Sorting first makes
+    // chunk membership a pure function of the detected event SET, not its arrival order, restoring the "same
+    // full set in any order" coalescing guarantee across chunk boundaries too.
+    const notificationEventsForChunking = [...notificationEvents].sort((a, b) => a.dedupKey.localeCompare(b.dedupKey));
+    for (const events of chunkNotificationEvents(notificationEventsForChunking)) {
       await env.JOBS.send({
         type: "notify-evaluate",
         requestedBy: "webhook",
-        events: notificationEvents,
+        events,
       });
     }
 
