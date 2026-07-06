@@ -70,22 +70,24 @@ function CommandTable({
     <>
       <h2>{title}</h2>
       <div className="not-prose overflow-x-auto">
-        <table className="w-full border-collapse text-sm">
+        <table className="w-full border-collapse text-token-sm">
           <thead>
-            <tr className="border-b border-hairline text-left">
+            <tr className="border-hairline text-left text-token-xs text-muted-foreground">
               <th className="py-2 pr-4 font-medium">Syntax</th>
               <th className="py-2 pr-4 font-medium">Effect</th>
               <th className="py-2 font-medium">Default roles</th>
             </tr>
           </thead>
-          <tbody>
+          <tbody className="divide-hairline">
             {entries.map((entry) => (
-              <tr key={entry.id} className="border-b border-hairline align-top">
-                <td className="py-2 pr-4 font-mono text-xs whitespace-nowrap">
+              <tr key={entry.id} className="align-top">
+                <td className="py-2 pr-4 font-mono text-token-xs whitespace-nowrap">
                   @gittensory {entry.id}
                 </td>
                 <td className="py-2 pr-4 text-muted-foreground">{entry.description}</td>
-                <td className="py-2 text-muted-foreground">{DEFAULT_ROLE_SUMMARY[entry.id] ?? "see policy"}</td>
+                <td className="py-2 text-muted-foreground">
+                  {DEFAULT_ROLE_SUMMARY[entry.id] ?? "see policy"}
+                </td>
               </tr>
             ))}
           </tbody>
@@ -104,14 +106,15 @@ function GittensoryCommandsReference() {
     >
       <Callout variant="safety" title="Gate vs auto-review">
         Commands never flip the gate to advisory and never bypass the one-shot disposition.{" "}
-        <code>pause</code> and <code>resume</code> affect only auto-review scheduling — not gate enforcement.
-        See <Link to="/docs/how-reviews-work">How reviews work</Link> for the gate/review split.
+        <code>pause</code> and <code>resume</code> affect only auto-review scheduling — not gate
+        enforcement. See <Link to="/docs/how-reviews-work">How reviews work</Link> for the
+        gate/review split.
       </Callout>
 
       <h2>Syntax</h2>
       <p>
-        Post a comment on a pull request (or issue thread) mentioning <code>@gittensory</code> followed by a
-        verb. Trailing free text becomes the command argument where noted (for example{" "}
+        Post a comment on a pull request (or issue thread) mentioning <code>@gittensory</code>{" "}
+        followed by a verb. Trailing free text becomes the command argument where noted (for example{" "}
         <code>@gittensory ask what should I fix first?</code>).
       </p>
       <CodeBlock code={`@gittensory <verb> [argument or reason]`} />
@@ -122,9 +125,9 @@ function GittensoryCommandsReference() {
 
       <h2>Per-command authorization overrides</h2>
       <p>
-        Default allowed roles ship in the worker configuration. A maintainer can tighten or widen a single verb
-        via <code>commandAuthorization</code> in <code>.gittensory.yml</code> (resolved in the same order as
-        other per-repo settings: manifest → database → defaults).
+        Default allowed roles ship in the worker configuration. A maintainer can tighten or widen a
+        single verb via <code>commandAuthorization</code> in <code>.gittensory.yml</code> (resolved
+        in the same order as other per-repo settings: manifest → database → defaults).
       </p>
       <CodeBlock
         lang="yaml"
@@ -136,21 +139,23 @@ function GittensoryCommandsReference() {
     gate-override: [maintainer, collaborator]`}
       />
       <p>
-        Maintainer-only digest verbs ignore a plain <code>pr_author</code> role even when widened — only
-        maintainer, collaborator, and confirmed_miner survive the clamp for those commands.
+        Maintainer-only digest verbs ignore a plain <code>pr_author</code> role even when widened —
+        only maintainer, collaborator, and confirmed_miner survive the clamp for those commands.
       </p>
 
       <h2>Related docs</h2>
       <ul>
         <li>
-          <Link to="/docs/maintainer-workflow">Maintainer workflow</Link> — when to invoke commands in a PR
-          thread
+          <Link to="/docs/maintainer-workflow">Maintainer workflow</Link> — when to invoke commands
+          in a PR thread
         </li>
         <li>
-          <Link to="/docs/how-reviews-work">How reviews work</Link> — gate, dual-AI review, and unified comment
+          <Link to="/docs/how-reviews-work">How reviews work</Link> — gate, dual-AI review, and
+          unified comment
         </li>
         <li>
-          <Link to="/docs/tuning">Tuning your reviews</Link> — per-repo review and agent execution modes
+          <Link to="/docs/tuning">Tuning your reviews</Link> — per-repo review and agent execution
+          modes
         </li>
       </ul>
     </DocsPage>
