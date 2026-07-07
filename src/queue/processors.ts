@@ -419,6 +419,8 @@ import {
   isPlanCommand,
   isPlannerEnabled,
 } from "../review/planner";
+import { classifyConfigurationCommandRequest } from "../github/configuration-command";
+import { summarizeEffectiveConfig } from "../settings/effective-config-summary";
 import {
   buildReviewGroundingText,
   checkSummaryText as checkFailureSummaryText,
@@ -5512,7 +5514,7 @@ async function processGitHubWebhook(
     if (eventName === "issue_comment" && (await maybeProcessResolveCommand(env, deliveryId, payload))) { await recordWebhookEvent(env, { deliveryId, eventName, action: payload.action, installationId: payload.installation?.id, repositoryFullName: payload.repository?.full_name, payloadHash: "processed", status: "processed" }); return; }
     if (
       eventName === "issue_comment" &&
-      (await maybeProcessResolveCommand(env, deliveryId, payload))
+      (await maybeProcessConfigurationCommand(env, deliveryId, payload))
     ) {
       await recordWebhookEvent(env, {
         deliveryId,
@@ -10439,204 +10441,72 @@ async function maybeProcessResolveCommand(env: Env, deliveryId: string, payload:
   await recordAuditEvent(env, { eventType: "github_app.finding_resolved", actor: req.actor, targetKey, outcome: "completed", detail: `Marked ${resolvedLabel} as resolved.`, metadata: { deliveryId, repoFullName: req.repoFullName, scope: findingRef.scope, resolvedWarningCount: selection.findings.length, recordedSuppressionCount, ...(findingRef.scope === "single" ? { findingCode: findingRef.findingCode } : {}) } });
   await recordGithubProductUsage(env, "finding_resolved", { actor: req.actor, repoFullName: req.repoFullName, targetKey, outcome: "completed", metadata: { scope: findingRef.scope, resolvedWarningCount: selection.findings.length, recordedSuppressionCount, ...(findingRef.scope === "single" ? { findingCode: findingRef.findingCode } : {}) } }); return true; }
 /**
- * `@gittensory resolve [<finding-id>]` (#2166 dispatch scaffold). A maintainer records that a posted review
- * finding (or every finding on the PR when no id is supplied) is resolved so it stops re-surfacing in future
- * passes. Contributor scope stops at authorization + `github_app.finding_resolved` audit/usage + a public
- * confirmation — suppression semantics that feed the next review are maintainer-owned (#1964).
+ * `@gittensory configuration` (#2168): post the EFFECTIVE resolved review config (yml>DB>defaults) as a
+ * public-safe comment so a maintainer can see what's actually in force without the dashboard. Read-only — it never
+ * mutates the PR, so unlike gate-override it always answers a maintainer's direct query (the displayed execution
+ * mode still reflects a pause). Honors the repo's per-repo `commandAuthorization` for `configuration` over the REAL
+ * repo permission (never the spoofable comment author_association). Returns true once it owns the event; a
+ * non-configuration comment returns false and falls through to the other command handlers.
  */
-async function maybeProcessResolveCommand(
+async function maybeProcessConfigurationCommand(
   env: Env,
   deliveryId: string,
   payload: GitHubWebhookPayload,
 ): Promise<boolean> {
-  const command = parseGittensoryMentionCommand(payload.comment?.body);
-  if (!command || command.name !== "resolve") return false;
-
-  const req = classifyPrCommandRequest(payload, getInstallationId(payload));
+  const req = classifyConfigurationCommandRequest(payload, getInstallationId(payload));
+  if (!req) return false;
   if (!req.ok) {
-    await recordFindingResolvedSkip(
-      env,
-      deliveryId,
-      req.repoFullName,
-      req.targetKey,
-      req.actor,
-      req.reason,
-    );
+    await recordConfigurationSkip(env, deliveryId, req.repoFullName, req.targetKey, req.actor, req.reason);
     return true;
   }
-  const targetKey = `${req.repoFullName}#${req.pr.number}`;
-  const [pr, settings] = await Promise.all([
-    getPullRequest(env, req.repoFullName, req.pr.number),
-    resolveRepositorySettings(env, req.repoFullName),
-  ]);
-  if (!pr) {
-    await recordFindingResolvedSkip(
-      env,
-      deliveryId,
-      req.repoFullName,
-      targetKey,
-      req.actor,
-      "cached_pr_missing",
-    );
-    return true;
-  }
-
-  const { authorization } = await authorizePrActionActor({
-    env,
-    deliveryId,
-    installationId: req.installationId,
-    repoFullName: req.repoFullName,
-    issue: payload.issue!,
-    actor: req.actor,
-    commandName: "resolve" as GittensoryMentionCommandName,
-    settings,
-    pr,
+  const targetKey = `${req.repoFullName}#${req.issueNumber}`;
+  const settings = await resolveRepositorySettings(env, req.repoFullName);
+  const association = await resolveRealRepoPermissionAssociation(env, req.installationId, req.repoFullName, req.actor);
+  const authorization = evaluateCommandAuthorization({
+    policy: settings.commandAuthorization,
+    commandName: "configuration",
+    commenterLogin: req.actor,
+    commenterAssociation: association,
   });
   if (!authorization.authorized) {
-    await recordAuditEvent(env, {
-      eventType: "github_app.finding_resolved_denied",
-      actor: req.actor,
-      targetKey,
-      outcome: "denied",
-      detail: authorization.reason,
-      metadata: {
-        deliveryId,
-        repoFullName: req.repoFullName,
-        allowedRoles: commandAuthorizationAllowedRoles(
-          settings.commandAuthorization,
-          "resolve",
-        ),
-      },
-    });
-    await recordGithubProductUsage(env, "finding_resolved_denied", {
-      actor: req.actor,
-      repoFullName: req.repoFullName,
-      targetKey,
-      outcome: "denied",
-      metadata: {
-        reason: authorization.reason,
-        actorKind: authorization.actorKind,
-        allowedRoles: commandAuthorizationAllowedRoles(
-          settings.commandAuthorization,
-          "resolve",
-        ),
-      },
-    });
+    await recordConfigurationSkip(env, deliveryId, req.repoFullName, targetKey, req.actor, authorization.reason);
     return true;
   }
-
-  const findingRef = normalizeResolveFindingRef(command.reason);
-  if (!findingRef.ok) {
-    await recordFindingResolvedSkip(
-      env,
-      deliveryId,
-      req.repoFullName,
-      targetKey,
-      req.actor,
-      findingRef.reason,
-    );
-    return true;
-  }
-
   const mode = resolveAgentActionMode({
-    globalPaused: isGlobalAgentPause(env) || (await isGlobalAgentFrozen(env)),
+    globalPaused: isGlobalAgentPause(env),
     agentPaused: settings.agentPaused,
     agentDryRun: settings.agentDryRun,
   });
-  const resolvedLabel =
-    findingRef.scope === "whole_pr"
-      ? "all review findings on this pull request"
-      : `\`${findingRef.findingCode}\``;
-  const confirmation = sanitizePublicComment(
-    [
-      AGENT_COMMAND_COMMENT_MARKER,
-      "",
-      "> [!NOTE]",
-      `> **Review finding resolved by @${req.actor}**`,
-      `> Marked ${resolvedLabel} as resolved for this PR. The Gate check-run is unchanged.`,
-      "",
-      "---",
-      gittensoryFooter(),
-    ].join("\n"),
+  const body = sanitizePublicComment(
+    [AGENT_COMMAND_COMMENT_MARKER, "", summarizeEffectiveConfig(settings, mode), "", "---", gittensoryFooter()].join("\n"),
   );
-  await createOrUpdateAgentCommandComment(
-    env,
-    req.installationId,
-    req.repoFullName,
-    req.pr.number,
-    confirmation,
-    mode,
-  );
-  if (mode === "live") {
-    await recordAuditEvent(env, {
-      eventType: "github_app.finding_resolved",
-      actor: req.actor,
-      targetKey,
-      outcome: "completed",
-      detail: `Marked ${resolvedLabel} as resolved.`,
-      metadata: {
-        deliveryId,
-        repoFullName: req.repoFullName,
-        scope: findingRef.scope,
-        ...(findingRef.scope === "single"
-          ? { findingCode: findingRef.findingCode }
-          : {}),
-      },
-    });
-    await recordGithubProductUsage(env, "finding_resolved", {
-      actor: req.actor,
-      repoFullName: req.repoFullName,
-      targetKey,
-      outcome: "completed",
-      metadata: {
-        scope: findingRef.scope,
-        ...(findingRef.scope === "single"
-          ? { findingCode: findingRef.findingCode }
-          : {}),
-      },
-    });
-  } else {
-    await recordFindingResolvedSkip(
-      env,
-      deliveryId,
-      req.repoFullName,
-      targetKey,
-      req.actor,
-      mode === "dry_run" ? "dry_run" : "agent_paused",
-      mode,
-    );
-  }
+  await createIssueComment(env, req.installationId, req.repoFullName, req.issueNumber, body);
+  await recordAuditEvent(env, {
+    eventType: "github_app.configuration_posted",
+    actor: req.actor,
+    targetKey,
+    outcome: "completed",
+    detail: `Effective configuration posted for ${targetKey}.`,
+    metadata: { deliveryId, repoFullName: req.repoFullName, mode },
+  });
   return true;
 }
 
-async function recordFindingResolvedSkip(
+async function recordConfigurationSkip(
   env: Env,
   deliveryId: string,
-  repoFullName: string | null | undefined,
-  targetKey: string | null | undefined,
+  repoFullName: string | null,
+  targetKey: string | null,
   actor: string | null,
   reason: string,
-  mode?: "dry_run" | "paused",
 ): Promise<void> {
   await recordAuditEvent(env, {
-    eventType: "github_app.finding_resolved_skipped",
+    eventType: "github_app.configuration_skipped",
     actor,
     targetKey,
     outcome: "completed",
     detail: reason,
-    metadata: {
-      deliveryId,
-      repoFullName: repoFullName ?? null,
-      reason,
-      ...(mode ? { mode } : {}),
-    },
-  });
-  await recordGithubProductUsage(env, "finding_resolved_skipped", {
-    actor,
-    repoFullName,
-    targetKey,
-    outcome: "skipped",
-    metadata: { reason, ...(mode ? { mode } : {}) },
+    metadata: { deliveryId, repoFullName, reason },
   });
 }
 
