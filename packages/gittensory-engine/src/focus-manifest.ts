@@ -330,6 +330,7 @@ export type FocusManifestSettings = Partial<
     | "reviewEvasionProtection"
     | "reviewEvasionLabel"
     | "reviewEvasionComment"
+    | "mergeTrainMode"
   >
 > & {
   // `typeLabels`/`linkedIssueLabelPropagation`/`linkedIssueHardRules` are declared PARTIAL here (not via the `Pick<RepositorySettings,
@@ -1903,6 +1904,8 @@ function parseSettingsOverride(value: JsonValue | undefined, warnings: string[])
   }
   const reviewEvasionComment = normalizeOptionalBoolean(r.reviewEvasionComment, "settings.reviewEvasionComment", warnings);
   if (reviewEvasionComment !== null) out.reviewEvasionComment = reviewEvasionComment;
+  const mergeTrainMode = normalizeOptionalEnum(r.mergeTrainMode, "settings.mergeTrainMode", ["off", "audit", "enforce"] as const, warnings);
+  if (mergeTrainMode !== null) out.mergeTrainMode = mergeTrainMode;
   return out;
 }
 
