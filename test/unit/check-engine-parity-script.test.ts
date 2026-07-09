@@ -11,13 +11,14 @@ import {
   defaultResolveInstalledEngineVersion,
   describeEngineVersionSkew,
   discoverEngineParityPairs,
+  type EngineParityPair,
   isEngineStubPair,
   isThinEngineReExportShim,
   normalizeEngineParityText,
   normalizeImportSpec,
   runEngineParityChecks,
   runEngineParityMain,
-} from "../../scripts/check-engine-parity.mjs";
+} from "../../scripts/check-engine-parity";
 
 const TSX_BIN = join(process.cwd(), "node_modules", ".bin", "tsx");
 
@@ -75,10 +76,10 @@ describe("check-engine-parity script", () => {
   it("discovers real in-scope pairs in the repository (regression guard)", () => {
     const pairs = discoverEngineParityPairs({ root: process.cwd() });
     expect(pairs.length).toBeGreaterThanOrEqual(14);
-    expect(pairs.some((pair) => pair.fileName === "guardrail-config.ts")).toBe(true);
-    expect(pairs.some((pair) => pair.fileName === "change-guardrail.ts")).toBe(true);
-    expect(pairs.some((pair) => pair.fileName === "duplicate-winner.ts")).toBe(false);
-    expect(pairs.some((pair) => pair.fileName === "check-names.ts")).toBe(false);
+    expect(pairs.some((pair: EngineParityPair) => pair.fileName === "guardrail-config.ts")).toBe(true);
+    expect(pairs.some((pair: EngineParityPair) => pair.fileName === "change-guardrail.ts")).toBe(true);
+    expect(pairs.some((pair: EngineParityPair) => pair.fileName === "duplicate-winner.ts")).toBe(false);
+    expect(pairs.some((pair: EngineParityPair) => pair.fileName === "check-names.ts")).toBe(false);
   });
 
   it("the real repo's hand-duplicated pairs agree after normalization (regression guard)", () => {
@@ -192,7 +193,7 @@ describe("check-engine-parity script", () => {
   });
 
   it("prints a clean summary and exits 0 for the real repo state when run as a subprocess", () => {
-    const output = execFileSync(TSX_BIN, ["scripts/check-engine-parity.mjs"], { encoding: "utf8" });
+    const output = execFileSync(TSX_BIN, ["scripts/check-engine-parity.ts"], { encoding: "utf8" });
     expect(output).toMatch(/Engine-parity check ok:/);
     expect(output).toMatch(/hand-duplicated file pair/);
   });
@@ -201,7 +202,7 @@ describe("check-engine-parity script", () => {
     const emptyRoot = mkdtempSync(join(tmpdir(), "engine-parity-empty-"));
     try {
       expect(() =>
-        execFileSync(TSX_BIN, [join(process.cwd(), "scripts/check-engine-parity.mjs")], {
+        execFileSync(TSX_BIN, [join(process.cwd(), "scripts/check-engine-parity.ts")], {
           cwd: emptyRoot,
           encoding: "utf8",
         }),
@@ -214,13 +215,13 @@ describe("check-engine-parity script", () => {
   it("runEngineParityChecks aggregates drift and skew failures", () => {
     const combined = runEngineParityChecks({
       root: "/fake",
-      readFile: (_root, relativePath) => {
+      readFile: (_root: string, relativePath: string) => {
         if (relativePath === "packages/gittensory-engine/package.json") return JSON.stringify({ version: "0.2.0" });
         if (relativePath === "src/settings/autonomy.ts") return "export const MODE = 'strict';\n";
         if (relativePath === "packages/gittensory-engine/src/settings/autonomy.ts") return "export const MODE = 'relaxed';\n";
         throw new Error(`unexpected read: ${relativePath}`);
       },
-      listDir: (_root, relativePath) => {
+      listDir: (_root: string, relativePath: string) => {
         if (relativePath === "src/settings") return ["autonomy.ts"];
         if (relativePath === "packages/gittensory-engine/src/settings") return ["autonomy.ts"];
         return [];

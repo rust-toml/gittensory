@@ -8,17 +8,27 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-export const ENGINE_PARITY_AREAS = Object.freeze(["review", "settings", "signals"]);
+export const ENGINE_PARITY_AREAS = Object.freeze(["review", "settings", "signals"] as const);
 const ENGINE_SRC_ROOT = "packages/gittensory-engine/src";
 const HOST_SRC_ROOT = "src";
 const ENGINE_PACKAGE_JSON = "packages/gittensory-engine/package.json";
 const ENGINE_PACKAGE_NAME = "@jsonbored/gittensory-engine";
 
-function defaultReadFile(root, relativePath) {
+export type EngineParityPair = {
+  area: string;
+  fileName: string;
+  hostRelative: string;
+  engineRelative: string;
+};
+
+export type EngineParityReadFile = (root: string, relativePath: string) => string;
+export type EngineParityListDir = (root: string, relativePath: string) => string[];
+
+function defaultReadFile(root: string, relativePath: string): string {
   return readFileSync(join(root, relativePath), "utf8");
 }
 
-function defaultListDir(root, relativePath) {
+function defaultListDir(root: string, relativePath: string): string[] {
   try {
     return readdirSync(join(root, relativePath));
   } catch {
@@ -27,7 +37,7 @@ function defaultListDir(root, relativePath) {
 }
 
 /** Map equivalent relative import paths so import-only drift between host and engine copies does not false-fail. */
-export function normalizeImportSpec(spec) {
+export function normalizeImportSpec(spec: string): string {
   let normalized = spec;
   if (normalized.endsWith(".js")) normalized = normalized.slice(0, -3);
   if (/^\.\.\/types\/[\w-]+$/.test(normalized)) normalized = "../types";
@@ -36,18 +46,18 @@ export function normalizeImportSpec(spec) {
 }
 
 /** Normalize line endings and canonicalize relative `from` specifiers before byte comparison. */
-export function normalizeEngineParityText(text) {
+export function normalizeEngineParityText(text: string): string {
   return text
     .replace(/\r\n/g, "\n")
     .split("\n")
     .map((line) =>
-      line.replace(/from\s+['"](\.\.\/[^'"]+)['"]/g, (_match, spec) => `from "${normalizeImportSpec(spec)}"`),
+      line.replace(/from\s+['"](\.\.\/[^'"]+)['"]/g, (_match, spec: string) => `from "${normalizeImportSpec(spec)}"`),
     )
     .join("\n");
 }
 
 /** True when the host copy is only a thin re-export of the engine module (not a hand-duplicated twin). */
-export function isThinEngineReExportShim(srcText) {
+export function isThinEngineReExportShim(srcText: string): boolean {
   const stripped = srcText
     .replace(/\/\*[\s\S]*?\*\//g, "")
     .split("\n")
@@ -58,8 +68,8 @@ export function isThinEngineReExportShim(srcText) {
 }
 
 /** True when the engine twin is a placeholder stub (e.g. check-names) rather than a full parallel copy. */
-export function isEngineStubPair(srcText, engineText) {
-  const compact = (text) => text.replace(/\s/g, "").length;
+export function isEngineStubPair(srcText: string, engineText: string): boolean {
+  const compact = (text: string) => text.replace(/\s/g, "").length;
   const engineCompact = compact(engineText);
   const srcCompact = compact(srcText);
   return engineCompact > 0 && srcCompact > engineCompact * 3 && engineCompact < 250;
@@ -69,8 +79,16 @@ export function isEngineStubPair(srcText, engineText) {
  * Discover in-scope hand-duplicated twins under src/{review,settings,signals} that also exist in the engine tree
  * and are neither host shims nor engine stubs.
  */
-export function discoverEngineParityPairs({ root, listDir = defaultListDir, readFile = defaultReadFile }) {
-  const pairs = [];
+export function discoverEngineParityPairs({
+  root,
+  listDir = defaultListDir,
+  readFile = defaultReadFile,
+}: {
+  root: string;
+  listDir?: EngineParityListDir;
+  readFile?: EngineParityReadFile;
+}): EngineParityPair[] {
+  const pairs: EngineParityPair[] = [];
   for (const area of ENGINE_PARITY_AREAS) {
     const hostDir = join(HOST_SRC_ROOT, area);
     const engineDir = join(ENGINE_SRC_ROOT, area);
@@ -93,9 +111,17 @@ export function discoverEngineParityPairs({ root, listDir = defaultListDir, read
 /**
  * Compare normalized bodies of every discovered pair. Returns `{ failures, pairsChecked }` — pure given injectable IO.
  */
-export function checkEngineParityDrift({ root, readFile = defaultReadFile, listDir = defaultListDir }) {
+export function checkEngineParityDrift({
+  root,
+  readFile = defaultReadFile,
+  listDir = defaultListDir,
+}: {
+  root: string;
+  readFile?: EngineParityReadFile;
+  listDir?: EngineParityListDir;
+}): { failures: string[]; pairsChecked: EngineParityPair[] } {
   const pairs = discoverEngineParityPairs({ root, readFile, listDir });
-  const failures = [];
+  const failures: string[] = [];
   for (const pair of pairs) {
     const hostText = readFile(root, pair.hostRelative);
     const engineText = readFile(root, pair.engineRelative);
@@ -114,7 +140,7 @@ export function checkEngineParityDrift({ root, readFile = defaultReadFile, listD
 }
 
 /** Parse `major.minor.patch` prefix; non-numeric prerelease segments compare as equal at the patch level. */
-export function parseSemverCore(version) {
+export function parseSemverCore(version: string): [number, number, number] | null {
   const match = String(version).trim().match(/^(\d+)\.(\d+)\.(\d+)/);
   if (!match) return null;
   return [Number(match[1]), Number(match[2]), Number(match[3])];
@@ -124,26 +150,26 @@ export function parseSemverCore(version) {
  * Compare two semver strings. Returns `-1` (installed behind expected), `0` (equal), or `1` (installed ahead).
  * Unparseable versions are treated as behind so the skew check fails loudly.
  */
-export function compareSemver(installed, expected) {
+export function compareSemver(installed: string, expected: string): -1 | 0 | 1 {
   const installedCore = parseSemverCore(installed);
   const expectedCore = parseSemverCore(expected);
   if (!installedCore || !expectedCore) return -1;
   for (let index = 0; index < 3; index += 1) {
-    if (installedCore[index] < expectedCore[index]) return -1;
-    if (installedCore[index] > expectedCore[index]) return 1;
+    if (installedCore[index]! < expectedCore[index]!) return -1;
+    if (installedCore[index]! > expectedCore[index]!) return 1;
   }
   return 0;
 }
 
 /** Human-readable skew label for doctor output and test assertions. */
-export function describeEngineVersionSkew(installed, expected) {
+export function describeEngineVersionSkew(installed: string, expected: string): "behind" | "equal" | "ahead" {
   const comparison = compareSemver(installed, expected);
   if (comparison < 0) return "behind";
   if (comparison > 0) return "ahead";
   return "equal";
 }
 
-export function defaultResolveInstalledEngineVersion(root) {
+export function defaultResolveInstalledEngineVersion(root: string): string | null {
   try {
     const engineEntry = join(root, "node_modules", ENGINE_PACKAGE_NAME, "package.json");
     if (!existsSync(engineEntry)) return null;
@@ -153,7 +179,7 @@ export function defaultResolveInstalledEngineVersion(root) {
   }
 }
 
-export function defaultReadExpectedEngineVersion(root, readFile = defaultReadFile) {
+export function defaultReadExpectedEngineVersion(root: string, readFile: EngineParityReadFile = defaultReadFile): string | null {
   try {
     const text = readFile(root, ENGINE_PACKAGE_JSON);
     return JSON.parse(text).version ?? null;
@@ -161,6 +187,13 @@ export function defaultReadExpectedEngineVersion(root, readFile = defaultReadFil
     return null;
   }
 }
+
+export type EngineVersionSkewResult = {
+  failures: string[];
+  installed: string | null;
+  expected: string | null;
+  skew: string;
+};
 
 /**
  * Version-skew tripwire: installed @jsonbored/gittensory-engine must be >= the monorepo engine package version.
@@ -171,8 +204,13 @@ export function checkEngineVersionSkew({
   readFile = defaultReadFile,
   resolveInstalled = defaultResolveInstalledEngineVersion,
   readExpected = (r) => defaultReadExpectedEngineVersion(r, readFile),
-}) {
-  const failures = [];
+}: {
+  root: string;
+  readFile?: EngineParityReadFile;
+  resolveInstalled?: (root: string) => string | null;
+  readExpected?: (root: string) => string | null;
+}): EngineVersionSkewResult {
+  const failures: string[] = [];
   const installed = resolveInstalled(root);
   const expected = readExpected(root);
   const skew = installed && expected ? describeEngineVersionSkew(installed, expected) : "unknown";
@@ -191,7 +229,17 @@ export function checkEngineVersionSkew({
 }
 
 /** Run both the file-pair drift check and the version-skew check. */
-export function runEngineParityChecks(options) {
+export function runEngineParityChecks(options: {
+  root: string;
+  readFile?: EngineParityReadFile;
+  listDir?: EngineParityListDir;
+  resolveInstalled?: (root: string) => string | null;
+  readExpected?: (root: string) => string | null;
+}): {
+  failures: string[];
+  pairsChecked: EngineParityPair[];
+  versionSkew: EngineVersionSkewResult;
+} {
   const drift = checkEngineParityDrift(options);
   const skew = checkEngineVersionSkew(options);
   return {
@@ -202,7 +250,7 @@ export function runEngineParityChecks(options) {
 }
 
 /** @internal Exported for subprocess-free unit tests of the CLI success/failure paths. */
-export function runEngineParityMain(root = process.cwd()) {
+export function runEngineParityMain(root: string = process.cwd()): number {
   const { failures, pairsChecked, versionSkew } = runEngineParityChecks({ root });
 
   if (failures.length > 0) {
@@ -218,7 +266,7 @@ export function runEngineParityMain(root = process.cwd()) {
   return 0;
 }
 
-function main() {
+function main(): void {
   process.exit(runEngineParityMain(process.cwd()));
 }
 

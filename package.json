@@ -51,7 +51,7 @@
     "ui:version-audit": "node scripts/check-ui-mcp-version-copy.mjs",
     "docs:drift-check": "node scripts/check-docs-drift.mjs",
     "manifest:drift-check": "tsx scripts/check-manifest-drift.mjs",
-    "engine-parity:drift-check": "tsx scripts/check-engine-parity.mjs",
+    "engine-parity:drift-check": "tsx scripts/check-engine-parity.ts",
     "ui:deploy": "npm run ui:build && npm run ui:deploy:built",
     "ui:deploy:built": "wrangler deploy --config apps/gittensory-ui/dist/server/wrangler.json",
     "ui:version:built": "wrangler versions upload --config apps/gittensory-ui/dist/server/wrangler.json",
