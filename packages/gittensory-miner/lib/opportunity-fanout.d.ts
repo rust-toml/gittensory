@@ -1,6 +1,20 @@
+import type { PolicyDocCache } from "./policy-doc-cache.js";
+
 export type FanoutTarget = {
   owner: string;
   repo: string;
+};
+
+/** Options common to every fan-out/search entry point. `policyDocCache`, when supplied, lets discovery revalidate
+ * each repo's policy docs with a conditional GET instead of a full refetch (#4842). */
+export type FanoutOptions = {
+  apiBaseUrl?: string;
+  concurrency?: number;
+  rateLimitLowWaterMark?: number;
+  rateLimitHighWaterMark?: number;
+  perPage?: number;
+  sleepFn?: (ms: number) => Promise<unknown>;
+  policyDocCache?: PolicyDocCache | null;
 };
 
 export type RawCandidateIssue = {
@@ -42,51 +56,23 @@ export function mapWithConcurrency<T, R>(
 export function fetchCandidateIssuesWithSummary(
   targets: FanoutTarget[],
   githubToken: string,
-  options?: {
-    apiBaseUrl?: string;
-    concurrency?: number;
-    rateLimitLowWaterMark?: number;
-    rateLimitHighWaterMark?: number;
-    perPage?: number;
-    sleepFn?: (ms: number) => Promise<unknown>;
-  },
+  options?: FanoutOptions,
 ): Promise<CandidateIssueSummary>;
 
 export function fetchCandidateIssues(
   targets: FanoutTarget[],
   githubToken: string,
-  options?: {
-    apiBaseUrl?: string;
-    concurrency?: number;
-    rateLimitLowWaterMark?: number;
-    rateLimitHighWaterMark?: number;
-    perPage?: number;
-    sleepFn?: (ms: number) => Promise<unknown>;
-  },
+  options?: FanoutOptions,
 ): Promise<RawCandidateIssue[]>;
 
 export function searchCandidateIssuesWithSummary(
   searchQuery: string,
   githubToken: string,
-  options?: {
-    apiBaseUrl?: string;
-    concurrency?: number;
-    rateLimitLowWaterMark?: number;
-    rateLimitHighWaterMark?: number;
-    perPage?: number;
-    sleepFn?: (ms: number) => Promise<unknown>;
-  },
+  options?: FanoutOptions,
 ): Promise<CandidateIssueSummary>;
 
 export function searchCandidateIssues(
   searchQuery: string,
   githubToken: string,
-  options?: {
-    apiBaseUrl?: string;
-    concurrency?: number;
-    rateLimitLowWaterMark?: number;
-    rateLimitHighWaterMark?: number;
-    perPage?: number;
-    sleepFn?: (ms: number) => Promise<unknown>;
-  },
+  options?: FanoutOptions,
 ): Promise<RawCandidateIssue[]>;
